@@ -2,6 +2,9 @@
 
 Panduan deployment dan konfigurasi Site-to-Site IPsec VPN Policy-Based antara **Google Cloud Platform (GCP)** pada project **`dev-aji`** region **`asia-southeast2` (Jakarta)** dan **Sangfor Next-Generation Firewall (NGAF)**.
 
+> [!NOTE]
+> Konfigurasi ini telah disesuaikan karena **user/remote network di sisi Sangfor menggunakan IP Publik** (bukan private IP RFC 1918). Lalu lintas menuju IP publik target akan di-routing secara spesifik melalui VPN tunnel tanpa mengganggu koneksi internet reguler lainnya.
+
 ---
 
 ## 1. Arsitektur & Topologi Jaringan
@@ -23,9 +26,9 @@ flowchart LR
 
     subgraph OnPrem["Sangfor Customer / On-Premise"]
         direction TB
-        IP_SNG["Public IP WAN<br/>103.196.44.66"]
+        IP_SNG["Public IP WAN (Peer)<br/>103.111.211.56"]
         NGAF["Sangfor Firewall (NGAF)"]
-        LAN["Remote LAN Subnet<br/>192.168.10.0/24 (Dummy)"]
+        LAN["Target Host / Subnet Publik User<br/>103.111.211.56/32 (atau Blok Publik)"]
         IP_SNG --- NGAF --> LAN
     end
 
@@ -38,15 +41,18 @@ flowchart LR
 
 | Parameter | Sisi GCP (Local) | Sisi Sangfor (Remote) | Catatan |
 | :--- | :--- | :--- | :--- |
-| **GCP Project ID** | `dev-aji` | - | Project target di GCP |
+| **GCP Project ID** | `dev-aji` | - | Project aktif di Google Cloud |
 | **Region** | `asia-southeast2` (Jakarta) | - | Lokasi resource VPN GCP |
 | **VPC Network** | `default` | - | Jaringan VPC yang digunakan |
-| **Public Endpoint IP** | Dinamis (Hasil Step 1) | `103.196.44.66` | Diberikan oleh ISP masing-masing |
-| **Local Subnet (CIDR)** | `10.184.0.0/20` | `192.168.10.0/24` | Harus simetris (Mirror) |
-| **Remote Subnet (CIDR)** | `192.168.10.0/24` | `10.184.0.0/20` | Harus simetris (Mirror) |
-| **IKE Version** | `IKEv2` | `IKEv2` | Pastikan versi sama |
+| **Public Endpoint IP** | Dinamis (Hasil Step 1) | `103.111.211.56` | IP Publik WAN Sangfor |
+| **Local Subnet (CIDR)** | `10.184.0.0/20` | `103.111.211.56/32` | Subnet enkripsi lokal masing-masing sisi |
+| **Remote Subnet (CIDR)** | `103.111.211.56/32` | `10.184.0.0/20` | Harus cermin simetris (*mirror*) |
+| **IKE Version** | `IKEv2` | `IKEv2` | Wajib identik |
 | **Pre-Shared Key (PSK)** | `vcw1nAT5S4+Fnv+JoziDLsU1kjs1/+MQ` | `vcw1nAT5S4+Fnv+JoziDLsU1kjs1/+MQ` | Wajib identik tanpa spasi |
 | **Routing Method** | Policy-Based + Static Route | Policy-Based / Route-Based | Tanpa BGP |
+
+> [!TIP]
+> Jika user memiliki **alokasi blok subnet IP publik** (misalnya `103.111.211.0/24`), ganti nilai `103.111.211.56/32` dengan prefix subnet publik tersebut di kedua sisi (GCP & Sangfor).
 
 ---
 
@@ -71,15 +77,24 @@ gcloud config set project dev-aji
 ```
 
 ### Opsi A: Menggunakan Script Otomatis (Direkomendasikan)
-Cukup jalankan script bash di Google Cloud Shell / Linux:
+Jalankan script bash di Google Cloud Shell / Linux:
 ```bash
 chmod +x setup-vpn.sh verify-vpn.sh cleanup-vpn.sh
 ./setup-vpn.sh
 ```
+Atau jika user memiliki range subnet publik tertentu:
+```bash
+REMOTE_TRAFFIC_SELECTOR="103.111.211.0/24" ./setup-vpn.sh
+```
+
 Atau jika menjalankan dari PowerShell lokal (Windows):
 ```powershell
 .\setup-vpn.ps1
+# Atau dengan parameter custom:
+.\setup-vpn.ps1 -PeerIp "103.111.211.56" -RemoteTrafficSelector "103.111.211.56/32"
 ```
+
+---
 
 ### Opsi B: Menjalankan Perintah gcloud Manual Step-by-Step
 
@@ -93,7 +108,7 @@ gcloud compute addresses create gcp-vpn-ip-lab \
     --region=asia-southeast2 \
     --network-tier=PREMIUM
 ```
-Cek IP yang didapat:
+Cek IP Publik GCP yang didapat:
 ```bash
 gcloud compute addresses describe gcp-vpn-ip-lab --project=dev-aji --region=asia-southeast2 --format="value(address)"
 ```
@@ -135,27 +150,28 @@ gcloud compute forwarding-rules create fr-vpn-udp4500 \
     --target-vpn-gateway=vpn-gw-sangfor-lab
 ```
 
-#### Langkah 4: Buat VPN Tunnel Policy-Based
+#### Langkah 4: Buat VPN Tunnel Policy-Based (IP Publik User)
 ```bash
+# Catatan: Sesuaikan 103.111.211.56/32 jika user menggunakan subnet publik lain
 gcloud compute vpn-tunnels create tunnel-to-sangfor \
     --project=dev-aji \
     --region=asia-southeast2 \
-    --peer-address=103.196.44.66 \
+    --peer-address=103.111.211.56 \
     --shared-secret="vcw1nAT5S4+Fnv+JoziDLsU1kjs1/+MQ" \
     --ike-version=2 \
     --local-traffic-selector=10.184.0.0/20 \
-    --remote-traffic-selector=192.168.10.0/24 \
+    --remote-traffic-selector=103.111.211.56/32 \
     --target-vpn-gateway=vpn-gw-sangfor-lab
 ```
 
-#### Langkah 5: Buat Rute Statis ke Subnet Sangfor
+#### Langkah 5: Buat Rute Statis ke IP Publik User
 ```bash
 gcloud compute routes create route-to-sangfor-lab \
     --project=dev-aji \
     --network=default \
     --next-hop-vpn-tunnel=tunnel-to-sangfor \
     --next-hop-vpn-tunnel-region=asia-southeast2 \
-    --destination-range=192.168.10.0/24
+    --destination-range=103.111.211.56/32
 ```
 
 #### Langkah 6: Buka Firewall GCP Ingress
@@ -165,7 +181,7 @@ gcloud compute firewall-rules create allow-vpn-from-sangfor \
     --network=default \
     --direction=INGRESS \
     --action=ALLOW \
-    --source-ranges=192.168.10.0/24 \
+    --source-ranges=103.111.211.56/32 \
     --rules=tcp,udp,icmp
 ```
 </details>
@@ -183,7 +199,7 @@ Saat mengatur IPsec VPN di Web Console Sangfor NGAF:
    - **IKE Version**: `IKEv2`.
 
 2. **Traffic Selectors / Encrypted Subnets:**
-   - **Local Subnet**: `192.168.10.0/24` *(jaringan lokal Sangfor)*
+   - **Local Subnet**: `103.111.211.56/32` *(IP publik user / host target di Sangfor)*
    - **Remote Subnet**: `10.184.0.0/20` *(jaringan VPC GCP `dev-aji` Jakarta)*
 
 3. **Phase 1 Proposal (IKE SA):**
@@ -199,12 +215,31 @@ Saat mengatur IPsec VPN di Web Console Sangfor NGAF:
    - **PFS (Perfect Forward Secrecy)**: `Group 14` (atau *Disabled* jika disesuaikan)
    - **SA Lifetime**: `10800` detik (3 jam)
 
-5. **Sangfor Security Policy:**
-   - Pastikan terdapat policy yang mengizinkan traffic dari zone LAN ke zone VPN (dan sebaliknya).
+5. **Wajib: NAT Exemption / No-NAT Policy di Sangfor:**
+   - Karena traffic menggunakan IP Publik di sisi lokal Sangfor, pastikan membuat rule **No-NAT (Bypass NAT)** untuk paket yang berasal dari IP Publik user menuju subnet GCP `10.184.0.0/20`.
+   - Hal ini mencegah Sangfor melakukan Source NAT (SNAT) otomatis yang dapat merusak pencocokan IPsec Security Association (SA).
+
+6. **Sangfor Security Policy:**
+   - Pastikan terdapat firewall policy yang mengizinkan traffic dua arah antara subnet lokal user dan subnet GCP.
 
 ---
 
-## 6. Verifikasi & Troubleshooting
+## 6. Catatan Khusus: Routing IP Publik via VPN di GCP
+
+Mengapa rute IP publik di VPN GCP aman dan bagaimana cara kerjanya?
+
+1. **Mekanisme Longest Prefix Match (LPM):**
+   - Di tabel routing GCP VPC, aturan default internet adalah `0.0.0.0/0`.
+   - Ketika dibuat static route ke `103.111.211.56/32` (atau prefix subnet spesifik) dengan next-hop VPN tunnel, rute ini memiliki prefix yang jauh lebih spesifik daripada `0.0.0.0/0`.
+   - Oleh karena itu, hanya paket menuju IP publik user tersebut yang dibelokkan ke dalam VPN tunnel. Akses internet global lainnya tetap normal melalui Default Internet Gateway GCP.
+
+2. **Format Host (/32) vs Subnet Blok:**
+   - **Single Host (`/32`)**: Dipakai jika user hanya mengakses 1 mesin/server target di balik Sangfor, atau jika target yang diakses adalah alamat IP publik peer itu sendiri.
+   - **Subnet Blok (`/24`, `/28`, dll.)**: Dipakai jika user memiliki alokasi subnet publik tersendiri untuk beberapa server.
+
+---
+
+## 7. Verifikasi & Troubleshooting
 
 Jalankan script verifikasi:
 ```bash
@@ -219,16 +254,20 @@ Jalankan script verifikasi:
 
 ---
 
-## 7. Cara Mengubah Remote Subnet (Bila Info Customer Sudah Ada)
+## 8. Cara Mengubah Remote Subnet / IP Publik
 
-> **PENTING:** Parameter `--remote-traffic-selector` pada tunnel GCP bersifat permanen (*immutable*). Jika IP Sangfor yang asli sudah diperoleh:
+> **PENTING:** Parameter `--remote-traffic-selector` pada tunnel GCP bersifat permanen (*immutable*). Jika IP publik target perlu diubah:
 
 1. Hapus rute lama:
    ```bash
    gcloud compute routes delete route-to-sangfor-lab --project=dev-aji --quiet
    ```
-2. Hapus tunnel lama:
+2. Hapus firewall rule lama (opsional jika subnet berubah):
+   ```bash
+   gcloud compute firewall-rules delete allow-vpn-from-sangfor --project=dev-aji --quiet
+   ```
+3. Hapus tunnel lama:
    ```bash
    gcloud compute vpn-tunnels delete tunnel-to-sangfor --region=asia-southeast2 --project=dev-aji --quiet
    ```
-3. Buat ulang tunnel & route dengan subnet baru menggunakan file `setup-vpn.sh` (cukup ubah variabel `REMOTE_TRAFFIC_SELECTOR` di baris atas script).
+4. Buat ulang dengan IP/subnet baru menggunakan script `setup-vpn.sh` atau `setup-vpn.ps1`.

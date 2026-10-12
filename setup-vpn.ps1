@@ -2,7 +2,10 @@
 # SCRIPT DEPLOYMENT POLICY-BASED CLASSIC VPN (GCP ke SANGFOR FIREWALL) - POWERSHELL
 # ==============================================================================
 [CmdletBinding()]
-param()
+param(
+    [string]$PeerIp                = "103.111.211.56",
+    [string]$RemoteTrafficSelector = "103.111.211.56/32" # Gunakan /32 untuk single host, atau CIDR subnet (misal 103.111.211.0/24) jika blok IP
+)
 
 $ErrorActionPreference = "Continue"
 
@@ -23,8 +26,6 @@ $FirewallName         = "allow-vpn-from-sangfor"
 $LocalTrafficSelector = "10.184.0.0/20"
 
 # Parameter Sisi Remote (Sangfor Firewall)
-$PeerIp               = "103.196.44.66"
-$RemoteTrafficSelector= "192.168.10.0/24" # Dummy IP subnet Sangfor
 $SharedSecret         = "vcw1nAT5S4+Fnv+JoziDLsU1kjs1/+MQ"
 $IkeVersion           = 2
 

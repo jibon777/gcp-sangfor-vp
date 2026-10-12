@@ -24,8 +24,12 @@ FIREWALL_NAME="allow-vpn-from-sangfor"
 LOCAL_TRAFFIC_SELECTOR="10.184.0.0/20"
 
 # Parameter Sisi Remote (Sangfor Firewall)
-PEER_IP="103.196.44.66"
-REMOTE_TRAFFIC_SELECTOR="192.168.10.0/24" # Dummy IP subnet Sangfor (sesuaikan jika ada info baru)
+PEER_IP="103.111.211.56"
+# Remote Traffic Selector (IP Publik User / Host di belakang Sangfor)
+# Catatan: Karena user menggunakan IP Publik:
+# - Jika single host / IP peer itu sendiri: gunakan format /32 (contoh: 103.111.211.56/32)
+# - Jika memiliki subnet / blok IP publik: gunakan prefix subnet (contoh: 103.111.211.0/24)
+REMOTE_TRAFFIC_SELECTOR="${REMOTE_TRAFFIC_SELECTOR:-103.111.211.56/32}"
 SHARED_SECRET='vcw1nAT5S4+Fnv+JoziDLsU1kjs1/+MQ'
 IKE_VERSION=2
 
